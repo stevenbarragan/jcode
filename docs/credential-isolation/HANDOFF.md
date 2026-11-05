@@ -3,9 +3,11 @@
 Wait for the maintainer's answer on the issue before opening an upstream PR.
 
 ## PR order
-1. Tool env allowlist + socket/debug hygiene + `PR_SET_DUMPABLE` (SIMPLEST-FIX.md). Harness first.
-2. Opt-in `JCODE_TOOL_UID` for Linux root-in-container; file tools deny credential dirs.
-3. `SecretStore` + socket capability token. Then executor split, bwrap sandbox, egress proxy, Seatbelt (DESIGN-SKETCH.md section 5).
+Phase 1 (the fix, both PRs required for the container case; spec in PHASE-1.md):
+1. Tool env allowlist + socket/debug hygiene + `PR_SET_DUMPABLE`. Harness first. Not a fix on its own: do not describe it upstream as closing #2052.
+2. Opt-in `JCODE_TOOL_UID` for Linux root-in-container: credential-dir startup check, file-tool denylist (after symlinks), webfetch private-range block, egress recipe in docs. Also verify browser daemon sockets and the harness API server are not reachable cross-uid (PHASE-1 table row 6b).
+
+Optional hardening, only if the maintainer asks (DESIGN-SKETCH.md section 5): 2 `SecretStore` + socket token, 3 executor split, 4 bwrap sandbox, 5 egress proxy, 6 Seatbelt, 7 gateway track.
 
 ## Write first: canary harness
 `crates/jcode-app-core/tests/credential_canary.rs`: isolated `JCODE_HOME=tempdir`, `JCODE_SOCKET` inside it, fake key `sk-canary-2052-0000` only. One test per FINDINGS section 7 item, `#[ignore = "expected_leak"]` until its PR flips it. Never touch the real `~/.jcode` or the running server.

@@ -1,6 +1,6 @@
 # Credential-free tool execution: design sketch (issue #2052)
 
-Short sketch, as offered in the issue, to agree on the approach before code. Evidence and file:line references are in [FINDINGS.md](FINDINGS.md). No security guarantee is claimed until reviewed.
+Short sketch, as offered in the issue, to agree on the approach before code. Phase 1 ([PHASE-1.md](PHASE-1.md)) is the fix; sections 1-4 describe the end state that the optional hardening phases (section 5) build toward. Evidence and file:line references are in [FINDINGS.md](FINDINGS.md). No security guarantee is claimed until reviewed.
 
 ## Goal and threat model
 
@@ -19,9 +19,9 @@ Isolation backends, chosen by a config `tool_isolation = off | env | sandbox | u
 
 | Mode | Linux | macOS |
 |---|---|---|
-| `env` (step 0, weak) | `env_clear` + allowlist at every spawn | same |
+| `env` (PR 1, weak alone) | `env_clear` + allowlist at every spawn | same |
 | `sandbox` | bubblewrap (`--unshare-pid --unshare-ipc`, optional `--unshare-net`, `--die-with-parent`, ro binds), plus Landlock and a seccomp filter (deny `ptrace`, `process_vm_readv`) | Seatbelt profile via `sandbox-exec` (deny read of credential paths, deny network except proxy, deny `mach-lookup` of Keychain services) |
-| `uid` | broker runs as `jcode`, executor as `jcode-tool`; spawned via a tiny setuid-free launcher started by the container entrypoint | not supported without root; use `sandbox` |
+| `uid` (PR 2) | broker runs as `jcode`, executor as `jcode-tool`; spawned via a tiny setuid-free launcher started by the container entrypoint | not supported without root; use `sandbox` |
 | `container` | executor in a sibling container sharing only `/workspace`, broker socket bind-mounted | Docker Desktop, same idea |
 
 Env allowlist (all modes): `PATH HOME LANG LC_* TERM TMPDIR USER SHELL JCODE_SESSION_ID JCODE_SCRATCH_DIR` plus explicit per-session/cloud env the user opted into. Never `JCODE_SOCKET`. Replace the MCP denylist (`mcp/client.rs:597`) with the same allowlist.
@@ -62,20 +62,21 @@ Env allowlist (all modes): `PATH HOME LANG LC_* TERM TMPDIR USER SHELL JCODE_SES
 | Credential helper (Proposal 3, new) | absent | broker runs `api_key_command`, TTL cache |
 | Gateway mode (Proposal 2) | partial base URLs, placeholder key needed | separate, documented, explicitly non-isolating; boot with `gateway set, no key` via deferred-auth path (`provider_init.rs:1871`) |
 
-## 5. Phases and PRs
+## 5. Phases: one fix, then optional hardening
 
-| PR | Phase | What | Flips canary tests |
-|---|---|---|---|
-| 1 | 0, env hygiene | Tool env allowlist at every spawn (replaces MCP denylist), `JCODE_SOCKET` not passed by default, debug file toggle snapshotted at start, Linux `PR_SET_DUMPABLE=0`. See [SIMPLEST-FIX.md](SIMPLEST-FIX.md) | 1, 2, 3, 5, 7 |
-| 2 | 1, container uid | Opt-in `JCODE_TOOL_UID` (Linux, server as root): tools exec as another uid with `no_new_privs`; file tools deny credential dirs | 4, 6 (socket 0600) |
-| 3 | 2, broker hygiene | `SecretStore` replaces `set_var` of keys (10 call sites); per-connection socket capability token for CLI/swarm | defence in depth |
-| 4 | 3, executor split | `jcode tool-executor` child over an inherited socketpair; bash, MCP stdio, browser, osascript and file tools move there. Pure refactor | none |
-| 5 | 4, Linux sandbox | bubblewrap + Landlock + seccomp mode; fresh `$HOME`, PID namespace | 3, 4 without root |
-| 6 | 5, egress | broker CONNECT proxy, provider hosts and gateway ports denied | 8 |
-| 7 | 6, macOS | Seatbelt profile | 4, 8 on macOS |
-| 8 | separate track | gateway mode (Jev base URL, keyless boot) and `api_key_command`; documented as non-isolating | 9 |
+**Phase 1 is the fix** for the issue's use case (headless Linux containers): PR 1 + PR 2, specified in [PHASE-1.md](PHASE-1.md) together with the threat-by-threat residual table. PR 1 alone is not the fix: same-uid tools can still read credential files and drive the socket. Everything after phase 1 is **optional hardening**: each item adds a boundary for a different audience, and none is needed to close the container case.
 
-Test numbers refer to FINDINGS section 7. Write the harness first, in PR 1, with every test marked `expected_leak` until its PR flips it.
+| Phase | What | Adds | Who needs it | Why it can wait | Flips canary tests |
+|---|---|---|---|---|---|
+| **1 (the fix)** | PR 1 env allowlist, socket/debug hygiene, `PR_SET_DUMPABLE`. PR 2 opt-in `JCODE_TOOL_UID`, credential-dir check, file-tool denylist, webfetch private-range block, egress recipe | key not readable or spendable by tools in a root-run container | headless / container operators (the issue) | - | 1-7; 8 with the recipe |
+| 2, optional | `SecretStore` replaces `set_var` of keys (10 call sites); per-connection socket capability token | key out of server env; socket needs a token, so laptops gain socket protection | defence in depth; same-uid laptop users | phase 1 already keeps the key from children; large diff across every provider | 6 without uid |
+| 3, optional | executor split: `jcode tool-executor` per session over an inherited socketpair; bash, MCP stdio, browser, osascript and file tools move there | file-tool denylist becomes a real boundary; per-session isolation in the shared server | multi-tenant servers, swarms | pure refactor, big; phase 1 denylist covers the known paths | 4b, cross-session |
+| 4, optional | Linux sandbox: bubblewrap + Landlock + seccomp, fresh `$HOME`, PID namespace | phase 1 guarantees without root or a second uid | Linux desktop users | containers already have the uid boundary | 3, 4 without root |
+| 5, optional | egress: broker CONNECT proxy, provider hosts and gateway ports denied | built-in network policy, replaces the operator's iptables recipe | anyone with a reachable gateway who can't set firewall rules | container operators can use the recipe today | 8 |
+| 6, optional | macOS Seatbelt profile (deny credential paths, Keychain lookups, network except proxy) | same as phase 4 on macOS | macOS users | not the container case | 4, 8 on macOS |
+| 7, separate track | gateway mode (Jev base URL, keyless boot) and `api_key_command` | key off the jcode host; short-lived tokens | gateway operators | non-isolating by itself, as triage suggested | 9 |
+
+Test numbers refer to FINDINGS section 7. The harness lands in PR 1 with every test `expected_leak` until its phase flips it. Out of scope: root in the container, kernel bugs, the provider, secrets in the workspace, Windows.
 
 ## 6. Open questions for the maintainer
 

@@ -1,22 +1,28 @@
 <!-- DRAFT, not posted. Operator approves posting. -->
-Thanks for the triage! Here is the sketch you asked for, plus a small first step.
+Thanks for the triage! Here's the sketch you asked for. I split it into one fix plus optional hardening, so it's clear what closes this issue and what is extra.
 
-Files (branch `docs/credential-isolation-2052` on my fork):
-- Findings with file:line: https://github.com/stevenbarragan/jcode/blob/docs/credential-isolation-2052/docs/credential-isolation/FINDINGS.md
-- Simplest fix and first PR: https://github.com/stevenbarragan/jcode/blob/docs/credential-isolation-2052/docs/credential-isolation/SIMPLEST-FIX.md
-- Phased design sketch (process/UID isolation, filesystem and process visibility, network policy, every credential path): https://github.com/stevenbarragan/jcode/blob/docs/credential-isolation-2052/docs/credential-isolation/DESIGN-SKETCH.md
+**Phase 1, the fix (two PRs, both needed for our case):**
+- **PR 1** (~250 lines, all platforms): env allowlist at every tool spawn (replacing the MCP denylist, with `tools.env_passthrough` as an escape hatch), stop passing `JCODE_SOCKET` by default, only honour `~/.jcode/debug_control` if it existed at start, and `PR_SET_DUMPABLE=0` on Linux. Ships with a canary-key test harness.
+- **PR 2** (~150 lines, Linux, opt-in): `JCODE_TOOL_UID` so tools run as a second uid when the server is root in a container, plus a denylist of credential dirs for the in-process file tools and a private-range block for webfetch.
 
-Top findings:
-1. Saving a key also exports it into the server's own env (`jcode-provider-env/src/lib.rs:226`), and bash, browser and osascript children inherit the full env (`tool/bash.rs:918`). Only MCP stdio scrubs, and its denylist misses `*_TOKEN` and `*_SECRET` (`mcp/client.rs:597`).
-2. Tools run as the same uid, so they can read `~/.jcode` and `~/.config/jcode` `*.env`, `google_oauth.json`, `~/.claude/.credentials.json`, and on Linux `/proc/<server>/environ` and `mem`.
-3. `JCODE_SOCKET` is in the tool env (`server/socket.rs:331`), so a tool can drive the server and spend the key, and `touch ~/.jcode/debug_control` turns on the debug socket at runtime (`server/util.rs:25`).
-4. Jev decision URLs are hard-coded (`jev.rs:144,147`), so a gateway can't cover them yet. No `api_key_command` exists.
+To be upfront: PR 1 alone is not the fix. Tools would still run as the same user, so they could `cat ~/.config/jcode/*.env` or drive the server socket to spend the key. PR 2 is what puts a real boundary there. One gap is left after both: a tool could still reach an injecting gateway over the network. For containers the docs cover that with a per-uid egress rule. On a laptop without root, phase 1 is only hygiene, and full protection needs a sandbox.
 
-Proposed first PR (~250 lines, no architecture change): env allowlist at every tool spawn (replacing the MCP denylist, with a passthrough setting as escape hatch), stop passing `JCODE_SOCKET` by default, only honour the debug file toggle if it existed at start, and `PR_SET_DUMPABLE=0` on Linux. It comes with a canary-key test harness. To be clear about limits: it stops env and `/proc` leaks, but same-uid code can still read credential files and reach the socket. Closing that needs a different uid or a sandbox, which is PR 2 (opt-in tool uid for containers) and later the broker/executor split in the sketch. Gateway mode stays a separate, non-isolating track as you suggested.
+Docs (my fork, branch `docs/credential-isolation-2052`):
+- [PHASE-1.md](https://github.com/stevenbarragan/jcode/blob/docs/credential-isolation-2052/docs/credential-isolation/PHASE-1.md): both PRs, tests, and a table mapping each threat to its phase and what's still open
+- [DESIGN-SKETCH.md](https://github.com/stevenbarragan/jcode/blob/docs/credential-isolation-2052/docs/credential-isolation/DESIGN-SKETCH.md): process/uid isolation, fs and process visibility, network policy, every credential path
+- [FINDINGS.md](https://github.com/stevenbarragan/jcode/blob/docs/credential-isolation-2052/docs/credential-isolation/FINDINGS.md): evidence with file:line and canary repros
+
+**Optional hardening, take or leave any of it:**
+2. `SecretStore` instead of exporting keys to env, plus a socket capability token (helps same-uid laptops)
+3. Broker / executor split, one executor per session (real boundary for file tools, multi-tenant)
+4. Linux sandbox: bubblewrap, Landlock, seccomp (phase 1 guarantees without root)
+5. Built-in egress proxy (replaces the firewall recipe)
+6. macOS Seatbelt profile
+7. Gateway mode (Jev base URL, keyless boot) and `api_key_command`, kept separate and non-isolating as you suggested
 
 Questions:
-1. Is an env allowlist by default OK, given it can break users relying on inherited vars (`tools.env_passthrough = ["*"]` would opt out)? Or would you prefer it opt-in first?
-2. Long term: broker + executor split, or sandbox the existing children only?
-3. Is an opt-in `JCODE_TOOL_UID` for root-in-container acceptable before the general sandbox work?
+1. Is an env allowlist by default OK, or would you prefer it opt-in first? (`tools.env_passthrough = ["*"]` keeps today's behaviour.)
+2. Is an opt-in `JCODE_TOOL_UID` for root-in-container acceptable before any general sandbox work?
+3. Longer term, if you want the hardening: broker / executor split, or sandbox the existing children only?
 
-Happy to send PR 1 if this direction works for you. We run jcode headless in containers for cookyour.app, so I can test the container path end to end.
+Happy to send PR 1 and PR 2 if this direction works for you. We run jcode headless in containers for cookyour.app, so I can test the container path end to end.

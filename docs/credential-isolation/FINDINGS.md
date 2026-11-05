@@ -119,7 +119,7 @@ Hosts not governed by a per-provider base URL (non-exhaustive, from grep of `htt
 
 ## 5. Gaps for Proposal 3 (credential helper)
 
-No `api_key_command` / `apiKeyHelper` equivalent exists (grep for `api_key_command|apiKeyHelper|credential_helper|key_command`: no hits). Keys are static strings from env or files. A helper would naturally live in the broker (section B), with TTL caching; it must never run inside the executor.
+No `api_key_command` / `apiKeyHelper` equivalent exists (grep for `api_key_command|apiKeyHelper|credential_helper|key_command`: no hits). Keys are static strings from env or files. A helper would naturally live in the broker ([DESIGN-SKETCH.md](DESIGN-SKETCH.md) section 1), with TTL caching; it must never run inside the executor.
 
 ## 6. Platform notes
 
