@@ -1,4 +1,4 @@
-Thanks for the careful triage. Below is the design sketch you asked for, covering process/UID isolation, filesystem and process visibility, network policy and every credential-using provider path, with what I found in the current code. Nothing here asks for approval or implies a guarantee yet: I'd like us to agree on the boundary first. Gateway configuration is tracked separately in section 8, explicitly as a non-isolating improvement, as you recommended.
+Below is the design sketch you asked for, covering process/UID isolation, filesystem and process visibility, network policy and every credential-using provider path, with what I found in the current code. Nothing here asks for approval or implies a guarantee yet: I'd like us to agree on the boundary first. Gateway configuration is tracked separately in section 8, explicitly as a non-isolating improvement, as you recommended.
 
 All file:line references are against upstream `master` at `c725fa315`. No real credential was read or printed while investigating: only variable names and paths, and the repros use a fake key (`sk-canary-2052-0000`).
 
