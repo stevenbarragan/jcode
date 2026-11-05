@@ -18,7 +18,7 @@ Out of scope: root inside the container, kernel bugs, a malicious provider, secr
 
 Two deployment modes, with honestly different ceilings:
 
-- **Headless Linux container** (my case: I run jcode headless in containers for cookyour.app). The server can run as root or a dedicated uid and tools as a second uid. This can be made a real boundary with ordinary file permissions.
+- **Headless Linux container** (my case: I run jcode headless in containers). The server can run as root or a dedicated uid and tools as a second uid. This can be made a real boundary with ordinary file permissions.
 - **Laptop, same user, no root** (macOS or Linux desktop). Tools run as the user who owns the credentials. Against same-uid code without a sandbox, credentials cannot be fully protected. Env scrubbing helps, but a real boundary needs a sandbox (bubblewrap/Landlock on Linux, Seatbelt on macOS).
 
 </details>
@@ -33,7 +33,7 @@ Repro setup for every row: an isolated server, `JCODE_HOME=$(mktemp -d)`, `JCODE
 
 | # | Path | Exposure | Repro (canary) |
 |---|---|---|---|
-| 1 | Env inheritance: bash spawn `crates/jcode-app-core/src/tool/bash.rs:918` (bg: `:706`, `:1160`, `:1321`), browser `tool/browser.rs:982`, osascript `tool/computer/osa.rs:97`, selfdev `tool/desktop_selfdev.rs:448` | No `env_clear`, full server env inherited | Start with `OPENROUTER_API_KEY=sk-or-canary-2052-0000`, bash tool `env \| grep -c canary-2052` prints `1` |
+| 1 | Env inheritance: bash spawn `crates/jcode-app-core/src/tool/bash.rs:918` (bg: `:707`, `:1160`, `:1321`), browser `tool/browser.rs:982`, osascript `tool/computer/osa.rs:97`, selfdev `tool/desktop_selfdev.rs:448` | No `env_clear`, full server env inherited | Start with `OPENROUTER_API_KEY=sk-or-canary-2052-0000`, bash tool `env \| grep -c canary-2052` prints `1` |
 | 2 | Runtime export: `crates/jcode-provider-env/src/lib.rs:221-226` (`save_env_value_to_env_file` then `set_var`), choke point `crates/jcode-core/src/env.rs:21`; other callers `jcode-base/src/provider/activation.rs:285`, `auth/lifecycle.rs:1148`, `provider/openai.rs:328`, `provider_activity.rs:411`, `copilot_usage.rs:121`, `sidecar.rs:1311`, `src/cli/commands/provider_setup.rs:624`, `jcode-app-core/src/server/lifecycle.rs:311`, `tool/selfdev/reload.rs:549` | A key saved or activated later is inherited by every later child | `jcode login` the canary into the temp home without restarting, then bash `env` shows it |
 | 3 | MCP stdio scrub `crates/jcode-base/src/mcp/client.rs:597-619` (spawn `:216`) | Suffix denylist (`*_API_KEY`, `*_ACCESS_TOKEN`, `*_AUTH_TOKEN`, cloud names) misses `*_TOKEN` (for example `GITHUB_TOKEN`), `*_SECRET`, `*_PASSWORD`, `*_KEY` | MCP server `sh -c 'env > $OUT'` with `CANARY_TOKEN`, `CANARY_SECRET`, `CANARY_API_KEY` set: first two present, third absent |
 | 4 | Credential files, same uid (list below) | Readable by bash and by the in-process read/edit/agentgrep tools | `grep -r canary-2052 "$JCODE_HOME"`, and the `read` tool on `$JCODE_HOME/config/jcode/openrouter.env` |
