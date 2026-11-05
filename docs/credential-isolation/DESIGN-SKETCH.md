@@ -62,19 +62,20 @@ Env allowlist (all modes): `PATH HOME LANG LC_* TERM TMPDIR USER SHELL JCODE_SES
 | Credential helper (Proposal 3, new) | absent | broker runs `api_key_command`, TTL cache |
 | Gateway mode (Proposal 2) | partial base URLs, placeholder key needed | separate, documented, explicitly non-isolating; boot with `gateway set, no key` via deferred-auth path (`provider_init.rs:1871`) |
 
-## 5. Migration plan (small PRs)
+## 5. Phases and PRs
 
-1. **Canary leak test harness** (no behaviour change): integration test that boots an isolated server (`JCODE_HOME` tmp, own socket) with canary keys and asserts, per path in FINDINGS section 7, whether the canary is visible. Initially marked `expected_leak` so it documents today's state.
-2. **Env allowlist at every spawn site** (`tool_isolation = env`, default on): bash, background bash, browser, osascript, selfdev, MCP (replace denylist). Drop `JCODE_SOCKET` from tool env. Flip tests 1, 2, 5 to `must_not_leak`.
-3. **Stop exporting secrets into the server env**: `SecretStore`, change the `set_var` callers. `PR_SET_DUMPABLE=0` on Linux. Remove/lock the `debug_control` file toggle.
-4. **Executor process + IPC** (still same uid, mode `env`): move spawning into a `jcode tool-executor` child talking over a socketpair. Pure refactor, tests unchanged.
-5. **Linux `sandbox` mode** (bubblewrap + Landlock + seccomp), filesystem view and PID namespace. Flip tests 3, 4, 6, 7.
-6. **Egress proxy** with provider-host deny list; flip test 8.
-7. **`uid` and `container` modes** for headless Docker (the operator's case), with a documented Dockerfile.
-8. **macOS Seatbelt profile.**
-9. Separate track, non-isolating: gateway mode (Jev base URL, keyless boot, docs) and the credential helper.
+| PR | Phase | What | Flips canary tests |
+|---|---|---|---|
+| 1 | 0, env hygiene | Tool env allowlist at every spawn (replaces MCP denylist), `JCODE_SOCKET` not passed by default, debug file toggle snapshotted at start, Linux `PR_SET_DUMPABLE=0`. See [SIMPLEST-FIX.md](SIMPLEST-FIX.md) | 1, 2, 3, 5, 7 |
+| 2 | 1, container uid | Opt-in `JCODE_TOOL_UID` (Linux, server as root): tools exec as another uid with `no_new_privs`; file tools deny credential dirs | 4, 6 (socket 0600) |
+| 3 | 2, broker hygiene | `SecretStore` replaces `set_var` of keys (10 call sites); per-connection socket capability token for CLI/swarm | defence in depth |
+| 4 | 3, executor split | `jcode tool-executor` child over an inherited socketpair; bash, MCP stdio, browser, osascript and file tools move there. Pure refactor | none |
+| 5 | 4, Linux sandbox | bubblewrap + Landlock + seccomp mode; fresh `$HOME`, PID namespace | 3, 4 without root |
+| 6 | 5, egress | broker CONNECT proxy, provider hosts and gateway ports denied | 8 |
+| 7 | 6, macOS | Seatbelt profile | 4, 8 on macOS |
+| 8 | separate track | gateway mode (Jev base URL, keyless boot) and `api_key_command`; documented as non-isolating | 9 |
 
-Tests: for each row of the table in section 4, a canary test that runs the corresponding tool in the executor and greps env, `/proc`, files, sockets and a local fake provider log for the canary; plus a negative test that the broker's own call still carries it.
+Test numbers refer to FINDINGS section 7. Write the harness first, in PR 1, with every test marked `expected_leak` until its PR flips it.
 
 ## 6. Open questions for the maintainer
 

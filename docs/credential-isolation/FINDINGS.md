@@ -1,6 +1,6 @@
 # Credential isolation (issue #2052): findings
 
-Status: investigation only, no code changes. Base commit: `c725fa315` (origin default branch, 2026-11-05).
+Status: investigation only, no code changes. Key claims re-verified 2026-11-05 (provider-env:226, socket.rs:331, util.rs:25, jev.rs:144-147, mcp/client.rs:597, bash.rs:918). Note: `JCODE_SOCKET` reaches tools because `set_socket_path` calls `set_var` in the server env (`server/socket.rs:331`), not via an explicit `.env()`. Base commit: `c725fa315` (origin default branch, 2026-11-05).
 Line numbers refer to that commit. Rule followed: no real credential values were read or printed; only variable names and paths.
 
 ## 0. Summary
